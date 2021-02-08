@@ -45,9 +45,46 @@
     {{ template "create-context" . }}
     {{ template "command-end" . }}
 
-    {{ template "command-start" . }}
-    {{ template "set-credentials" . }}
-    {{ template "command-end" . }}
+  <div class="command">
+
+    <button class="btn" style="float:right" data-clipboard-snippet="">
+      <img class="clippy" width="13" src="{{ .Web_Path_Prefix }}static/clippy.svg" alt="">
+    </button>
+  <pre><code>kubectl config set-cluster {{ .ClusterName }} \
+  {{- if or .K8sCaPem .K8sCaURI }}
+    --certificate-authority=${HOME}/.kube/certs/{{ .ClusterName}}/k8s-ca.crt \
+  {{- end }}
+    --server={{ .K8sMasterURI }}</code></pre>
+  </div>
+
+  <div class="command">
+
+    <button class="btn" style="float:right" data-clipboard-snippet="">
+      <img class="clippy" width="13" src="{{ .Web_Path_Prefix }}static/clippy.svg" alt=""/>
+    </button>
+  <pre><code>kubectl config set-credentials {{ .Username }}-{{ .ClusterName }} \
+    --auth-provider=oidc \
+    --auth-provider-arg="idp-issuer-url={{ .Issuer }}" \
+    --auth-provider-arg="client-id={{ .ClientID }}" \
+    --auth-provider-arg="client-secret={{ .ClientSecret }}" \
+    --auth-provider-arg="refresh-token={{ .RefreshToken }}" \
+    --auth-provider-arg="id-token={{ .IDToken }}"
+  {{- if or (.IDPCaURI) (.IDPCaPem) }} \
+    --auth-provider-arg=idp-certificate-authority=${HOME}/.kube/certs/{{ .ClusterName }}/idp-ca.crt
+  {{- end }}</code></pre>
+  </div>
+
+  <div class="command">
+
+    <button class="btn" style="float:right" data-clipboard-snippet="">
+      <img class="clippy" width="13" src="{{ .Web_Path_Prefix }}static/clippy.svg" alt="">
+    </button>
+    <pre><code class="hljs">kubectl config set-context {{ if not .StaticContextName }}{{ .Username }}-{{ end }}{{ .ClusterName }} \
+    --cluster={{ .ClusterName }}{{ if .Namespace }} --namespace={{ .Namespace }}{{ end }} \
+    --user={{ .Username}}-{{.ClusterName }}</code></pre>
+  </div>
+
+  <div class="command">
 
     {{ template "command-start" . }}
     {{ template "set-context" . }}

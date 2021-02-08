@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/coreos/go-oidc"
+	"github.com/spf13/cast"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -56,15 +57,19 @@ func (d debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // Define each cluster
 type Cluster struct {
 	Name                string
+	Namespace           string
 	Short_Description   string
 	Description         string
 	Issuer              string
 	Client_Secret       string
 	Client_ID           string
+	Connector_ID        string
 	K8s_Master_URI      string
 	K8s_Ca_URI          string
 	K8s_Ca_Pem          string
+	K8s_Ca_Pem_File     string
 	Static_Context_Name bool
+	Scopes              []string
 
 	Verifier       *oidc.IDTokenVerifier
 	Provider       *oidc.Provider
@@ -88,10 +93,11 @@ type Config struct {
 	Static_Context_Name  bool
 	Trusted_Root_Ca      []string
 	Trusted_Root_Ca_File string
+	Kubectl_Version      string
 }
 
 func substituteEnvVars(text string) string {
-	re := regexp.MustCompile("\\${([a-zA-Z0-9\\-_]+)}")
+	re := regexp.MustCompile(`\${([a-zA-Z0-9\-_]+)}`)
 	matches := re.FindAllStringSubmatch(text, -1)
 	for _, val := range matches {
 		envVar := os.Getenv(val[1])
@@ -117,6 +123,9 @@ func start_app(config Config) {
 	}
 
 	certp, err := x509.SystemCertPool()
+	if err != nil {
+		log.Fatalf("error reading the system cert pool: %v", err)
+	}
 	// Load Inline CA certs
 	if len(config.Trusted_Root_Ca) > 0 {
 		for _, cert := range config.Trusted_Root_Ca {
@@ -146,6 +155,9 @@ func start_app(config Config) {
 
 	tr := &http.Transport{
 		TLSClientConfig: mTlsConfig,
+
+		// Set proxy callback for proxy support in this transport
+		Proxy: http.ProxyFromEnvironment,
 	}
 
 	// Ensure trailing slash on web-path-prefix
@@ -156,7 +168,7 @@ func start_app(config Config) {
 	}
 
 	// Generate handlers for each cluster
-	for i, _ := range config.Clusters {
+	for i := range config.Clusters {
 		cluster := config.Clusters[i]
 		if debug {
 			if cluster.Client == nil {
@@ -208,13 +220,24 @@ func start_app(config Config) {
 			}()
 		}
 
+		if len(cluster.Scopes) == 0 {
+			cluster.Scopes = []string{"openid", "profile", "email", "offline_access", "groups"}
+		}
+
+		if cluster.K8s_Ca_Pem_File != "" {
+			content, err := ioutil.ReadFile(cluster.K8s_Ca_Pem_File)
+			if err != nil {
+				log.Fatalf("Failed to load CA from file %s, %s", cluster.K8s_Ca_Pem_File, err)
+			}
+			cluster.K8s_Ca_Pem = cast.ToString(content)
+		}
+
 		cluster.Config = config
 
 		base_redirect_uri, err := url.Parse(cluster.Redirect_URI)
 
 		if err != nil {
-			fmt.Errorf("Parsing redirect_uri address: %v", err)
-			os.Exit(1)
+			log.Fatalf("Parsing redirect_uri address: %v", err)
 		}
 
 		// Each cluster gets a different login and callback URL
@@ -354,9 +377,12 @@ func initConfig() {
 		}
 
 		origConfigStr := bytes.NewBuffer(config).String()
-		viper.ReadConfig(bytes.NewBufferString(origConfigStr))
 
-		log.Printf("Using config file:", viper.ConfigFileUsed())
+		if err := viper.ReadConfig(bytes.NewBufferString(origConfigStr)); err != nil {
+			log.Fatalf("viper.ReadConfig failed to read config, %s", err.Error())
+		}
+
+		log.Printf("Using config file: %s", viper.ConfigFileUsed())
 	}
 }
 
@@ -364,7 +390,10 @@ func initConfig() {
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	viper.BindPFlags(RootCmd.Flags())
+	if err := viper.BindPFlags(RootCmd.Flags()); err != nil {
+		log.Fatal(err)
+	}
+
 	RootCmd.Flags().StringVar(&config_file, "config", "", "./config.yml")
 	RootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
 }
